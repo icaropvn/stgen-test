@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
-using System.Text.Json;
 using GoodHamburger.Api.Models;
+using GoodHamburger.Api.Exceptions;
+using Microsoft.AspNetCore.WebUtilities;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,25 +24,44 @@ var app = builder.Build();
 
 static (MenuItem Sandwich, List<MenuItem> Extras) ValidateOrderItems(OrderDto dto, List<MenuItem> menu) {
     var sandwich = menu.FirstOrDefault(i => i.Id == dto.SandwichId && i.Type == ItemType.Sandwich);
-    if(sandwich is null)
-        throw new ArgumentException("Invalid sandwich ID.");
+    if(sandwich is null) {
+        throw new ApiException(
+            "Invalid sandwich ID.",
+            "http://localhost/problems/invalid-sandwich-id",
+            StatusCodes.Status400BadRequest
+        );
+    }
 
     var extrasIds = dto.ExtrasIds ?? new List<int>();
-    if(extrasIds.GroupBy(x => x).Any(g => g.Count() > 1))
-        throw new ArgumentException("Duplicate extras are not allowed.");
+    if(extrasIds.GroupBy(x => x).Any(g => g.Count() > 1)) {
+        throw new ApiException(
+            "Duplicate extras are not allowed.",
+            "http://localhost/problems/duplicated-extras",
+            StatusCodes.Status400BadRequest
+        );
+    }
     
     var extras = extrasIds.Select(id => {
         var item = menu.FirstOrDefault(i =>
             i.Id == id && (i.Type == ItemType.Fries || i.Type == ItemType.Drink));
-            if(item is null)
-                throw new ArgumentException($"Extra ID {id} is invalid.");
+            if(item is null) {
+                throw new ApiException(
+                    $"Extra type item ID {id} is invalid.",
+                    "http://localhost/problems/invalid-extra-id",
+                    StatusCodes.Status400BadRequest
+                );
+            }
             return item;
     }).ToList();
 
-    if(extras.Count(e => e.Type == ItemType.Fries) > 1)
-        throw new ArgumentException("You can only include one fries.");
-    if(extras.Count(e => e.Type == ItemType.Drink) > 1)
-        throw new ArgumentException("You can only include one drink.");
+    if(extras.Count(e => e.Type == ItemType.Fries) > 1 ||
+       extras.Count(e => e.Type == ItemType.Drink) > 1) {
+        throw new ApiException(
+            "You can only include one extra item per type.",
+            "http://localhost/problems/extras-inclusion",
+            StatusCodes.Status400BadRequest
+        );
+    }
 
     return (sandwich, extras);
 }
@@ -74,24 +95,28 @@ app.UseExceptionHandler(errApp => {
     errApp.Run(async context => {
         var feature = context.Features.Get<IExceptionHandlerPathFeature>();
         var err = feature?.Error;
+
+        var statusCode = StatusCodes.Status500InternalServerError;
+        var typeUri = "http://localhost/problems/internal-server-error";
+        var detail = "An unexpected error occurred.";
         
-        if(err is JsonException || err is BadHttpRequestException) {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
-            context.Response.ContentType = "application/problem+json";
-            await context.Response.WriteAsJsonAsync(new ProblemDetails {
-                Status = StatusCodes.Status400BadRequest,
-                Title = "Malformed request",
-                Detail = "Could not read the request body as valid JSON."
-            });
+        if(err is ApiException apiEx) {
+            statusCode = apiEx.StatusCode;
+            typeUri = apiEx.TypeUri;
+            detail = apiEx.Message;
         }
-        else {
-            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-            context.Response.ContentType = "application/problem+json";
-            await context.Response.WriteAsJsonAsync(new ProblemDetails {
-                Status = 500,
-                Title = "Internal server error"
-            });
-        }
+
+        var pd = new ProblemDetails {
+            Type = typeUri,
+            Title = ReasonPhrases.GetReasonPhrase(statusCode),
+            Status = statusCode,
+            Detail = detail,
+            Instance = context.Request.Path
+        };
+
+        context.Response.StatusCode = statusCode;
+        context.Response.ContentType = "application/problem+json";
+        await context.Response.WriteAsJsonAsync(pd);
     });
 });
 
@@ -130,15 +155,10 @@ app.MapGet("/api/orders/{id:int}", (int id, List<Order> orders) => {
 app.MapPost("/api/orders", (OrderDto dto, List<Order> orders, List<MenuItem> menu) => {
     OrderTotalDto amountDetails;
 
-    try {
-        var (sandwich, extras) = ValidateOrderItems(dto, menu);
-        amountDetails = CalculateOrderAmount(sandwich, extras);
-    }
-    catch(ArgumentException ex) {
-        return Results.BadRequest(ex.Message);
-    }
+    var (sandwich, extras) = ValidateOrderItems(dto, menu);
+    amountDetails = CalculateOrderAmount(sandwich, extras);
 
-    var nextId = orders.Any() ? orders.Max(o => o.Id) + 1 : 1;
+    var nextId = orders.Count != 0 ? orders.Max(o => o.Id) + 1 : 1;
     var newOrder = new Order {
         Id = nextId,
         SandwichId = dto.SandwichId,
@@ -162,14 +182,8 @@ app.MapPut("/api/orders/{id:int}", (int id, OrderDto dto, List<Order> orders, Li
     if(order is null)
         return Results.NotFound($"Order ID {id} not found");
 
-    OrderTotalDto amountDetails;
-    try {
-        var (sandwich, extras) = ValidateOrderItems(dto, menu);
-        amountDetails = CalculateOrderAmount(sandwich, extras);
-    }
-    catch(ArgumentException ex) {
-        return Results.BadRequest(ex.Message);
-    }
+    var (sandwich, extras) = ValidateOrderItems(dto, menu);
+    OrderTotalDto amountDetails = CalculateOrderAmount(sandwich, extras);
 
     order.SandwichId = dto.SandwichId;
     order.ExtrasIds = dto.ExtrasIds;
@@ -190,7 +204,6 @@ app.MapDelete("/api/orders/{id:int}", (int id, List<Order> orders) => {
         return Results.NotFound($"Order ID {id} not found");
     
     orders.Remove(order);
-
     return Results.NoContent();
 })
 .Produces(StatusCodes.Status204NoContent)
