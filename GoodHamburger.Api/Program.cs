@@ -2,8 +2,8 @@ using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using GoodHamburger.Api.Models;
 using GoodHamburger.Api.Exceptions;
+using GoodHamburger.Api.Services;
 using Microsoft.AspNetCore.WebUtilities;
-using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,77 +14,13 @@ builder.Services.AddSingleton(sp => new List<MenuItem> {
     new MenuItem { Id = 4, Name = "Fries", Price = 2.00m, Type = ItemType.Fries },
     new MenuItem { Id = 5, Name = "Soft drink", Price = 2.50m, Type = ItemType.Drink }
 });
-
-builder.Services.AddSingleton(sp => new List<Order>());
+builder.Services.AddSingleton<IOrderRepository, InMemoryOrderRepository>();
+builder.Services.AddSingleton<IOrderService, OrderService>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
-
-static (MenuItem Sandwich, List<MenuItem> Extras) ValidateOrderItems(OrderDto dto, List<MenuItem> menu) {
-    var sandwich = menu.FirstOrDefault(i => i.Id == dto.SandwichId && i.Type == ItemType.Sandwich);
-    if(sandwich is null) {
-        throw new ApiException(
-            "Invalid sandwich ID.",
-            "http://localhost/problems/invalid-sandwich-id",
-            StatusCodes.Status400BadRequest
-        );
-    }
-
-    var extrasIds = dto.ExtrasIds ?? new List<int>();
-    if(extrasIds.GroupBy(x => x).Any(g => g.Count() > 1)) {
-        throw new ApiException(
-            "Duplicate extras are not allowed.",
-            "http://localhost/problems/duplicated-extras",
-            StatusCodes.Status400BadRequest
-        );
-    }
-    
-    var extras = extrasIds.Select(id => {
-        var item = menu.FirstOrDefault(i =>
-            i.Id == id && (i.Type == ItemType.Fries || i.Type == ItemType.Drink));
-            if(item is null) {
-                throw new ApiException(
-                    $"Extra type item ID {id} is invalid.",
-                    "http://localhost/problems/invalid-extra-id",
-                    StatusCodes.Status400BadRequest
-                );
-            }
-            return item;
-    }).ToList();
-
-    if(extras.Count(e => e.Type == ItemType.Fries) > 1 ||
-       extras.Count(e => e.Type == ItemType.Drink) > 1) {
-        throw new ApiException(
-            "You can only include one extra item per type.",
-            "http://localhost/problems/extras-inclusion",
-            StatusCodes.Status400BadRequest
-        );
-    }
-
-    return (sandwich, extras);
-}
-
-static OrderTotalDto CalculateOrderAmount(MenuItem sandwich, List<MenuItem> extras) {
-    var subtotal = sandwich.Price + extras.Sum(e => e.Price);
-
-    var hasFries = extras.Any(e => e.Type == ItemType.Fries);
-    var hasDrink = extras.Any(e => e.Type == ItemType.Drink);
-
-    decimal discount = (hasFries, hasDrink) switch {
-        (true, true)  => 0.20m,
-        (false, true) => 0.15m,
-        (true, false) => 0.10m,
-        _             => 0m
-    };
-
-    return new OrderTotalDto {
-        Subtotal = subtotal,
-        DiscountApplied = discount,
-        Total = subtotal * (1 - discount)
-    };
-}
 
 if(app.Environment.IsDevelopment()) {
     app.UseSwagger();
@@ -138,72 +74,39 @@ app.MapGet("/api/menu/extras", (List<MenuItem> menu) =>
 .Produces<IEnumerable<MenuItem>>(StatusCodes.Status200OK)
 .WithName("GetExtras");
 
-app.MapGet("/api/orders", (List<Order> orders) =>
-    Results.Ok(orders)
+app.MapGet("/api/orders", (IOrderRepository repo) =>
+    Results.Ok(repo.GetAll())
 )
-.Produces<List<Order>>(StatusCodes.Status200OK)
+.Produces<IEnumerable<Order>>(StatusCodes.Status200OK)
 .WithName("GetOrders");
 
-app.MapGet("/api/orders/{id:int}", (int id, List<Order> orders) => {
-    var order = orders.FirstOrDefault(o => o.Id == id);
+app.MapGet("/api/orders/{id:int}", (int id, IOrderRepository repo) => {
+    var order = repo.GetAll().FirstOrDefault(o => o.Id == id);
     return order is not null ? Results.Ok(order) : Results.NotFound();
 })
 .Produces<Order>(StatusCodes.Status200OK)
 .Produces(StatusCodes.Status404NotFound)
 .WithName("GetOrderById");
 
-app.MapPost("/api/orders", (OrderDto dto, List<Order> orders, List<MenuItem> menu) => {
-    OrderTotalDto amountDetails;
-
-    var (sandwich, extras) = ValidateOrderItems(dto, menu);
-    amountDetails = CalculateOrderAmount(sandwich, extras);
-
-    var nextId = orders.Count != 0 ? orders.Max(o => o.Id) + 1 : 1;
-    var newOrder = new Order {
-        Id = nextId,
-        SandwichId = dto.SandwichId,
-        ExtrasIds = dto.ExtrasIds,
-        Subtotal = amountDetails.Subtotal,
-        DiscountApplied = amountDetails.DiscountApplied,
-        Total = amountDetails.Total,
-        CreatedAt = DateTime.UtcNow
-    };
-
-    orders.Add(newOrder);
-
+app.MapPost("/api/orders", (OrderDto dto, IOrderService svc) => {
+    var newOrder = svc.CreateOrder(dto);
     return Results.Created($"/api/orders/{newOrder.Id}", newOrder);
 })
 .Produces<Order>(StatusCodes.Status201Created)
 .ProducesProblem(StatusCodes.Status400BadRequest)
 .WithName("CreateOrder");
 
-app.MapPut("/api/orders/{id:int}", (int id, OrderDto dto, List<Order> orders, List<MenuItem> menu) => {
-    var order = orders.FirstOrDefault(o => o.Id == id);
-    if(order is null)
-        return Results.NotFound($"Order ID {id} not found");
-
-    var (sandwich, extras) = ValidateOrderItems(dto, menu);
-    OrderTotalDto amountDetails = CalculateOrderAmount(sandwich, extras);
-
-    order.SandwichId = dto.SandwichId;
-    order.ExtrasIds = dto.ExtrasIds;
-    order.Subtotal = amountDetails.Subtotal;
-    order.DiscountApplied = amountDetails.DiscountApplied;
-    order.Total = amountDetails.Total;
-
-    return Results.Ok(order);
+app.MapPut("/api/orders/{id:int}", (int id, OrderDto dto, IOrderService svc) => {
+    var updated = svc.UpdateOrder(id, dto);
+    return updated is not null ? Results.Ok(updated) : Results.NotFound();
 })
 .Produces<Order>(StatusCodes.Status200OK)
 .ProducesProblem(StatusCodes.Status400BadRequest)
 .Produces(StatusCodes.Status404NotFound)
 .WithName("UpdateOrder");
 
-app.MapDelete("/api/orders/{id:int}", (int id, List<Order> orders) => {
-    var order = orders.FirstOrDefault(o => o.Id == id);
-    if(order is null)
-        return Results.NotFound($"Order ID {id} not found");
-    
-    orders.Remove(order);
+app.MapDelete("/api/orders/{id:int}", (int id, IOrderService svc) => {
+    svc.DeleteOrder(id);
     return Results.NoContent();
 })
 .Produces(StatusCodes.Status204NoContent)
