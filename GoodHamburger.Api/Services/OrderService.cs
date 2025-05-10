@@ -11,6 +11,7 @@ namespace GoodHamburger.Api.Services {
             _menu = menu;
         }
 
+        // order validations according business rules
         public (MenuItem Sandwich, List<MenuItem> Extras) ValidateOrderItems(OrderDto dto, List<MenuItem> menu) {
             var sandwich = menu.FirstOrDefault(i => i.Id == dto.SandwichId && i.Type == ItemType.Sandwich);
             if(sandwich is null)
@@ -55,6 +56,7 @@ namespace GoodHamburger.Api.Services {
             return (sandwich, extras);
         }
 
+        // calculates order discount
         private static decimal CalculateDiscount(List<MenuItem> extras) {
             var hasFries = extras.Any(e => e.Type == ItemType.Fries);
             var hasDrink = extras.Any(e => e.Type == ItemType.Drink);
@@ -67,12 +69,14 @@ namespace GoodHamburger.Api.Services {
             };
         }
 
+        // calculates order total amount (with discount)
         private static decimal CalculateTotal(MenuItem sandwich, List<MenuItem> extras) {
             var subtotal = sandwich.Price + extras.Sum(e => e.Price);
             var discount = CalculateDiscount(extras);
             return subtotal * (1 - discount);
         }
 
+        // creates a new order and persists it in the in-memory list
         public Order CreateOrder(OrderDto dto) {
             var (sandwich, extras) = ValidateOrderItems(dto, _menu);
             
@@ -94,6 +98,7 @@ namespace GoodHamburger.Api.Services {
             return order;
         }
 
+        // updates an order according its id
         public Order UpdateOrder(int id, OrderDto dto) {
             var existing = _repo.GetById(id);
             
@@ -124,6 +129,7 @@ namespace GoodHamburger.Api.Services {
             return existing;
         }
 
+        // delete an order according its id
         public void DeleteOrder(int id) {
             if(!_repo.Remove(id)) {
                 throw new ApiException(

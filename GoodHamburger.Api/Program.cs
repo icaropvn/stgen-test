@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.WebUtilities;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// seed in-memory menu items
 builder.Services.AddSingleton(sp => new List<MenuItem> {
     new MenuItem { Id = 1, Name = "X Burger", Price = 5.00m, Type = ItemType.Sandwich },
     new MenuItem { Id = 2, Name = "X Egg", Price = 4.50m, Type = ItemType.Sandwich },
@@ -14,19 +15,24 @@ builder.Services.AddSingleton(sp => new List<MenuItem> {
     new MenuItem { Id = 4, Name = "Fries", Price = 2.00m, Type = ItemType.Fries },
     new MenuItem { Id = 5, Name = "Soft drink", Price = 2.50m, Type = ItemType.Drink }
 });
+
+// register repository and service as singletons for dependency injection
 builder.Services.AddSingleton<IOrderRepository, InMemoryOrderRepository>();
 builder.Services.AddSingleton<IOrderService, OrderService>();
 
+// add Swagger support
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
+// enable Swagger UI in development env
 if(app.Environment.IsDevelopment()) {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
+// global exception handler
 app.UseExceptionHandler(errApp => {
     errApp.Run(async context => {
         var feature = context.Features.Get<IExceptionHandlerPathFeature>();
@@ -55,6 +61,8 @@ app.UseExceptionHandler(errApp => {
         await context.Response.WriteAsJsonAsync(pd);
     });
 });
+
+// -------- APPLICATION ENDPOINTS --------
 
 app.MapGet("/api/menu", (List<MenuItem> menu) =>
     Results.Ok(menu)
