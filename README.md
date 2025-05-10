@@ -1,8 +1,6 @@
+<img src="readme-assets/readme-banner.png"/>
+
 # Good Hamburger API
-
-A .NET 8 minimal API to manage orders for the fictional company "Good Hamburger".
-
-This project was created as a solution for the practical test of STgenetics' C# developer position.
 
 ## Project Description
 
