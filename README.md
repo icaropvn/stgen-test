@@ -1,7 +1,5 @@
 <img src="readme-assets/readme-banner.png"/>
 
-# Good Hamburger API
-
 ## Project Description
 
 This project implements a RESTful API using .NET 8 Minimal APIs. It stores data in memory and follows the Repository + Service pattern to separate concerns. It includes:
