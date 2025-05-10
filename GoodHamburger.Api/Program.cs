@@ -26,11 +26,9 @@ builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// enable Swagger UI in development env
-if(app.Environment.IsDevelopment()) {
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+// enable Swagger UI
+app.UseSwagger();
+app.UseSwaggerUI();
 
 // global exception handler
 app.UseExceptionHandler(errApp => {
