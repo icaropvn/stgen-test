@@ -97,12 +97,13 @@ namespace GoodHamburger.Api.Services {
         public Order UpdateOrder(int id, OrderDto dto) {
             var existing = _repo.GetById(id);
             
-            if(existing is null)
+            if(existing is null) {
                 throw new ApiException(
                     $"Order with ID {id} not found.",
                     "http://localhost/problems/order-not-found",
                     StatusCodes.Status404NotFound
                 );
+            }
 
             var (sandwich, extras) = ValidateOrderItems(dto, _menu);
 
@@ -112,20 +113,25 @@ namespace GoodHamburger.Api.Services {
             existing.DiscountApplied = CalculateDiscount(extras);
             existing.Total = CalculateTotal(sandwich, extras);
 
+            if(!_repo.Update(existing)) {
+                throw new ApiException(
+                    $"Order with ID {id} could not be updated.",
+                    "http://localhost/problems/order-update-failed",
+                    StatusCodes.Status500InternalServerError
+                );
+            }
+
             return existing;
         }
 
         public void DeleteOrder(int id) {
-            var existing = _repo.GetById(id);
-
-            if(existing is null)
+            if(!_repo.Remove(id)) {
                 throw new ApiException(
                     $"Order with ID {id} not found.",
-                    "http://localhost/problems/order-not-found",
+                    "urn:yourapp:problem:order-not-found",
                     StatusCodes.Status404NotFound
                 );
-
-            _repo.Remove(existing);
+            }
         }
     }
 }
